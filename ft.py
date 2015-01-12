@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 from matplotlib import cm
 import astropy.io.ascii as ascii
 import pyfits
+from PyAstronomy.pyTiming import pyPDM
 
 #
 #   Gets ALL the data for that Cepheid (combining old ASAS, new ASAS, and IOMC)
@@ -169,4 +170,27 @@ def get_IOMC_data(number):
     ceph_arr = np.hstack([mjd, mag_v, epochs, phase])
 
     return ceph_arr
+    
+#
+#   Helps find the initial parameters for the Fourier fit
+#
+def approximate_median(t, y):
+    median = np.median(y)
+    return median
+
+def approximate_period(t, y):
+    period =
+
+#
+#   Fits data with a Fourier Series. Before this works properly, there needs to be separate code to make the data easy to use for fitting...
+#   Basic idea is to try with one Fourier mode, and then use an f-test, add in another mode, another f-test, and stop adding in more modes when it turns out that the fit is not getting better
+#   If you give the fourier fit an order, it will do a fourier fit to that order.
+#
+
+def fourier_fit(t, y, order=0):
+    if order == 0:
+        fitfunc = lambda p, x: p[0]*cos(2*pi/p[1]*x+p[2]) + p[3]*x
+        errfunc = lambda p, x, y: fitfunc(p, x) - y
+        p0 = [-15., 0.8, 0., -1.] # Initial guess, you'll probably have to write this into it somehow. Maybe have it call on pdm analysis first to get an approximate frequency? And something similar to get the median, etc.
+    return fitfunction
 
