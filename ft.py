@@ -15,6 +15,9 @@ from matplotlib import cm
 import astropy.io.ascii as ascii
 import pyfits
 from PyAstronomy.pyTiming import pyPDM
+from scipy import optimize
+import heapq
+import os.path
 
 #
 #   Gets ALL the data for that Cepheid (combining old ASAS, new ASAS, and IOMC)
@@ -31,11 +34,12 @@ def get_ceph_data(name):
     per = Cepheid_visual['per']
 
     number = cepheids[name]
+    period = per[number]
     star_data = Cepheid_visual[number]
     name = star_data[0]
 
-    IOMC_dat = get_IOMC_data(number)
-    ASAS_dat = get_ASAS_data(name)
+    IOMC_dat = get_IOMC_data(number, period, ids[number])
+    ASAS_dat = get_ASAS_data(name, period)
 
     if ASAS_dat.size != 1:
         print "ASAS data included"
@@ -48,7 +52,7 @@ def get_ceph_data(name):
 #
 #   Gets all the ASAS data.
 #
-def get_ASAS_data(name):
+def get_ASAS_data(name, period):
     old_asas_file = "../asas_old/{}.txt".format(name)
     cepheid_filename = '_'.join([name[:-3],name[-3:]])
     new_asas_file = "../new_asas/{}.txt".format(cepheid_filename)
@@ -112,7 +116,7 @@ def get_ASAS_data(name):
         old_len = len(old_asasgd)
         arrshape = (old_len,1)
         m2_old = oldasas['m2']
-        m2_asasiomc_old = asas_old['m2'] - 0.03 #to make the data agree with the v-band magnitude from IOMC
+        m2_asasiomc_old = oldasas['m2'] - 0.03 #to make the data agree with the v-band magnitude from IOMC
         old_phases = oldasas_phase[old_asasgd]
         old_phases.shape = arrshape
         old_m2 = m2_old[old_asasgd]
@@ -133,9 +137,9 @@ def get_ASAS_data(name):
 #   Final columns go in order of: mjd, mag_v, epoch, phase
 #
 
-def get_IOMC_data(number):
+def get_IOMC_data(number, period, id):
     btime = 51544.5
-    filename = "../iomc/IOMC_{}.fits".format(ids[number])
+    filename = "../iomc/IOMC_{}.fits".format(id)
     hdulist = pyfits.open(filename)
     ceph_data = hdulist[1].data
     columns = hdulist[1].columns
@@ -146,7 +150,6 @@ def get_IOMC_data(number):
     exptime = ceph_data.field('exposure')
     pp = ceph_data.field('problems')
 
-    period = per[number]
     newjd = mjd - min(mjd)
 
     phase = mjd/period - np.fix(mjd/period)
@@ -170,7 +173,7 @@ def get_IOMC_data(number):
     ceph_arr = np.hstack([mjd, mag_v, epochs, phase])
 
     return ceph_arr
-    
+
 #
 #   Helps find the initial parameters for the Fourier fit
 #
@@ -178,19 +181,89 @@ def approximate_median(t, y):
     median = np.median(y)
     return median
 
-def approximate_period(t, y):
-    period =
+def approximate_amplitude(t, y):
+    amplitude = (max(y) - min(y))/2.
+    return amplitude
+
+#
+#   Extracts the median points from a set of data with lots of overlap
+#
+
+def extract_median(t, y):
+    binned_t = []
+    binned_mag = []
+    t_diff = np.diff(t)
+    end_ind = np.concatenate([np.where(t_diff > 0.04)[0] + 1, [len(t)]], 1)
+    begin_ind = np.concatenate([[0], np.where(t_diff > 0.04)[0] + 1],1)
+    bin_number = np.arange(0, len(end_ind))
+    for i in bin_number:
+        bin = t[begin_ind[i]:end_ind[i]]
+        bin_mag = y[begin_ind[i]:end_ind[i]]
+        t_median = np.median(bin)
+        m_median = np.median(bin_mag)
+        binned_t.append(t_median)
+        binned_mag.append(m_median)
+    
+    binned_t = np.asarray(binned_t)
+    binned_mag = np.asarray(binned_mag)
+    return binned_t, binned_mag
+
+#
+#   Gets the Cepheid's period from the txt file
+#
+
+def get_period(name):
+    Cepheid_visual = np.genfromtxt('../iomc/Cepheid_visual.txt', dtype=None, names=['name', 'id', 'cr1', 'cr2', 'ra1', 'ra2', 'ra3', 'dec1', 'dec2', 'dec3', 'radec', 'decdec', 'cr11', 'type', 'cr22', 'cr33', 'm1', 'err', 'mmax', 'mmin', 'per', 'gal_l', 'gal_b', 'Schafly Av', 'SFD Av', 'mag/kpc'], skip_header=2, filling_values=-1.0)
+    ids = Cepheid_visual['id']
+    names = Cepheid_visual['name']
+    id_numbers = np.arange(len(ids))
+    cepheids = {}
+    for i in id_numbers:
+        cepheids[names[i]] = i
+    per = Cepheid_visual['per']
+
+    number = cepheids[name]
+    period = per[number]
+    return period
 
 #
 #   Fits data with a Fourier Series. Before this works properly, there needs to be separate code to make the data easy to use for fitting...
+#   Currently, it has issues fitting the phase (it has a ridiculously large, unjustified phase shift)
 #   Basic idea is to try with one Fourier mode, and then use an f-test, add in another mode, another f-test, and stop adding in more modes when it turns out that the fit is not getting better
 #   If you give the fourier fit an order, it will do a fourier fit to that order.
 #
 
-def fourier_fit(t, y, order=0):
+def fourier_fit(mjd, mag, name, order=0):
+    period = get_period(name)
+    median = approximate_median(mjd, mag)
+    amplitude = approximate_amplitude(mjd, mag) #this guess usually turns out to be really off
+    zeroed_mag = mag - median # so that the data is more centered around zero...
     if order == 0:
-        fitfunc = lambda p, x: p[0]*cos(2*pi/p[1]*x+p[2]) + p[3]*x
-        errfunc = lambda p, x, y: fitfunc(p, x) - y
-        p0 = [-15., 0.8, 0., -1.] # Initial guess, you'll probably have to write this into it somehow. Maybe have it call on pdm analysis first to get an approximate frequency? And something similar to get the median, etc.
-    return fitfunction
+        # fitfunc = lambda p, x: p[0]*cos(2*pi/p[1]*x+p[2]) + p[3]*x
+        fitfunc = lambda p, x: p[0]*np.cos(2*np.pi/p[1]*x + p[2]) + p[3]
+        errfunc = lambda p, x, mag: fitfunc(p, x) - mag
+        p0 = [amplitude, period, 0., 0.] # Initial guess, you'll probably have to write this into it somehow. Maybe have it call on pdm analysis first to get an approximate frequency? And something similar to get the median, etc. Start off by assuming a phase-shift of 0.
+        p1, success = optimize.leastsq(errfunc, p0[:], args=(mjd,mag))
+    
+        time = np.linspace(mjd.min(), mjd.max(), 300)
+        #time = np.linspace(53500, 54000, 300)
+        plt.plot(mjd, mag, "ro", time, fitfunc(p1, time), "r-")
+        plt.ylim([min(y), heapq.nlargest(2, y)[1]])
+        #plt.xlim([53500, 54000])
+        print 'INITIAL GUESS' + '\n' + 'Amplitude:', p0[0], '\n' + 'Period: ', p0[1], '\n'  + 'Phase Shift: ', p0[2], '\n' + 'Offset: ', p0[3], '\n'
+        print 'FIT PARAMETERS' + '\n' + 'Amplitude:', p1[0], '\n' + 'Period: ', p1[1], '\n'  + 'Phase Shift: ', p1[2], '\n' + 'Offset: ', p1[3], '\n'
+        
+        plt.show()
+    
+        #   try higher orders
+        
+    else:
+         print "still working on it"
+    #   return fitfunc
 
+#
+#   Fit with a cosine
+#
+
+def cosine_fit(mjd, mag, name):
+    print "working on this part"
