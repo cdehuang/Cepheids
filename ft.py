@@ -186,6 +186,13 @@ def approximate_amplitude(t, y):
     return amplitude
 
 #
+#   Fold the data and then spit out the number of cycles needed, generally set to 2. Can give this the mjd and mag from the other parts and it will fold it. Then extract median will extract the median of the points and finally that can go into the fourier series.
+#
+
+def fold_data(t, y, period, num=2):
+
+
+#
 #   Extracts the median points from a set of data with lots of overlap
 #
 
@@ -230,7 +237,7 @@ def get_period(name):
 #   Fits data with a Fourier Series. Before this works properly, there needs to be separate code to make the data easy to use for fitting...
 #   Currently, it has issues fitting the phase (it has a ridiculously large, unjustified phase shift)
 #   Basic idea is to try with one Fourier mode, and then use an f-test, add in another mode, another f-test, and stop adding in more modes when it turns out that the fit is not getting better
-#   If you give the fourier fit an order, it will do a fourier fit to that order.
+#   If you give the fourier fit an order, it will do a fourier fit to that order. Otherwise order is set to zero, meaning that it will keep adding in more fits until its not doing better.
 #
 
 def fourier_fit(mjd, mag, name, order=0):
@@ -243,7 +250,7 @@ def fourier_fit(mjd, mag, name, order=0):
         fitfunc = lambda p, x: p[0]*np.cos(2*np.pi/p[1]*x + p[2]) + p[3]
         errfunc = lambda p, x, mag: fitfunc(p, x) - mag
         p0 = [amplitude, period, 0., 0.] # Initial guess, you'll probably have to write this into it somehow. Maybe have it call on pdm analysis first to get an approximate frequency? And something similar to get the median, etc. Start off by assuming a phase-shift of 0.
-        p1, success = optimize.leastsq(errfunc, p0[:], args=(mjd,mag))
+        p1, success = optimize.leastsq(errfunc, p0, args=(mjd,mag))
     
         time = np.linspace(mjd.min(), mjd.max(), 300)
         #time = np.linspace(53500, 54000, 300)
@@ -265,5 +272,94 @@ def fourier_fit(mjd, mag, name, order=0):
 #   Fit with a cosine
 #
 
-def cosine_fit(mjd, mag, name):
-    print "working on this part"
+def cosine_func(params, xdata):
+    return params[0]*np.cos(2*np.pi/params[1]*xdata + params[2]) + params[3]
+
+#
+#   Higher orders...try fixing the frequency first based off of the original cosine fit
+#   To avoid confusion, instead of reordering the parameters, I will instead make the second element of parameter = 1, so that
+#
+
+def cosine_orders(params, xdata, order, period):
+    return params[0]*np.cos(2*np.pi/order*period*xdata*params[1] + params[2]) + params[3]
+
+#
+#   Error function
+#
+
+def error_func(params, function, xdata, ydata):
+    return function(params, xdata) - ydata
+
+#
+#   Another attempt at an error function
+#
+
+
+def error_series(params, xdata, ydata, order, period):
+    return cosine_series(params, xdata, order, period) - ydata
+
+#
+#   New approach. The input parameters may just be the guess for the original mode
+#
+
+def cosine_series(params, xdata, order, period):
+    fund_mode = params[0]*np.cos(2*np.pi/period*xdata + params[1]) + params[2]
+    if order > 1:
+        sum_func = fund_mode
+        for i in (np.arange(order-1) + 2):
+            sum_func = fund_mode + params[i+1]*np.cos(2*np.pi/(2*period)*xdata + params[i+2])
+    else:
+        sum_func = fund_mode
+    return sum_func
+
+#
+#   New version of fourier fit. Currently is able to fit to a certain mode that you input. Need to change it to so that it will fit to any mode, depending on the errors.
+#
+
+def fourier_series(mjd, mag, name, order=1.):
+    #   initial guess for period
+    period = get_period(name)
+    median = approximate_median(mjd, mag)
+    amplitude = approximate_amplitude(mjd, mag)
+    zeroed_mag = mag - median
+    
+    p0 = [amplitude, 0., median]
+    
+    p1, success = optimize.leastsq(error_series, p0, args=(mjd, mag, order, period))
+    errors = np.sum(np.power(error_series(p1, mjd, mag, order, period), 2))
+    add_order = True
+    
+    while (add_order == True) & (order < 6):
+        order = order + 1
+        p00 = np.concatenate([p1, [0.02, 0.]])
+        p2, success = optimize.leastsq(error_series, p00, args=(mjd, mag, order, period))
+        errors2 = np.sum(np.power(error_series(p2, mjd, mag, order, period), 2))
+        if errors2 < errors:
+            p1 = p00*1.
+            errors = errors2*1.
+        else:
+            add_order = False
+            order = order - 1
+    
+    # time = np.linspace(mjd.min(), mjd.max(), 300)
+    time = np.linspace(53500, 53600, 300)
+    plt.plot(mjd, mag, "ro", time, cosine_series(p1, time, order, period), "r-")
+    plt.ylim([min(y), heapq.nlargest(2, y)[1]])
+    plt.xlim([53500, 53600])
+    print 'INITIAL GUESS' + '\n' + 'Amplitude:', p0[0],'\n' + 'Phase Shift: ', p0[1], '\n' + 'Offset: ', p0[2], '\n'
+    print 'FIT PARAMETERS' + '\n' + 'Amplitude:', p1[0], '\n'  + 'Phase Shift: ', p1[1], '\n' + 'Offset: ', p1[2], '\n'
+    print 'SUMMED ERRORS: ', errors
+    print 'FIT ORDER: ', order
+    print 'PERIOD: ', period
+    print p1
+    print p2
+
+    plt.show()
+
+#fixed_per = p1[1]
+#p11 = [p1[0], 1., p1[2], p1[3]]
+#print p1
+#order = 2
+#function2 = cosine_func(p1, mjd)
+#p2, success = optimize.leastsq(error_func2, p11, args=(cosine_orders, function2, mjd, mag, order, fixed_per))
+#errors2 = np.sum(np.power(error_func2(cosine_orders, function2, p2, mjd, mag, order, period), 2))
