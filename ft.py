@@ -18,6 +18,7 @@ from PyAstronomy.pyTiming import pyPDM
 from scipy import optimize
 import heapq
 import os.path
+import math
 
 #
 #   Gets ALL the data for that Cepheid (combining old ASAS, new ASAS, and IOMC)
@@ -190,7 +191,45 @@ def approximate_amplitude(t, y):
 #
 
 def fold_data(t, y, period, num=2):
+    phase = t/period - np.fix(t/period)
+    phases = phase*1.
+    ydata = y*1.
+    print num
+    x = 0
+    if num > 1:
+        for i in (np.arange(num-1) + 2):
+            x += 1
+            print x
+            add_phase = phase + (i-1.)
+            phases = np.concatenate([phases, add_phase])
+            ydata = np.concatenate([ydata, y])
+        return phases, ydata
+    else:
+        return phases, ydata
 
+# ipython notebook for the steve stuff
+# Simpler median extraction--just bin by bins of set size. Unless the number of bins is specified, it will just do about 50 bins per cycle
+#
+
+def get_median(phases, ydata, num_bins=70):
+    #   total number of bins = bins
+    num_phases = max(phases)
+    nbins = int(num_bins*math.ceil(num_phases))
+    
+    #   bin data
+    bins = np.linspace(0, math.ceil(num_phases), nbins)
+    delta = bins[1] - bins[0]
+    idx = np.digitize(phases, bins)
+    running_median = [np.median(ydata[idx == k]) for k in range(nbins)]
+    phase_medians = bins - delta/2
+    return phase_medians, running_median
+"""
+    #   plot as a test
+    plt.scatter(phases, ydata, color='k', alpha=0.2, s=2)
+    plt.plot(bins-delta/2, running_median, 'r--', lw=4, alpha=.8)
+    plt.axis('tight')
+    plt.show()
+"""
 
 #
 #   Extracts the median points from a set of data with lots of overlap
