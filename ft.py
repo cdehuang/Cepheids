@@ -207,8 +207,8 @@ def fold_data(t, y, period, num=2):
     else:
         return phases, ydata
 
-# ipython notebook for the steve stuff
-# Simpler median extraction--just bin by bins of set size. Unless the number of bins is specified, it will just do about 50 bins per cycle
+# 
+# Simpler median extraction--just bin by bins of set size. Unless the number of bins is specified, it will just do about 70 bins per cycle
 #
 
 def get_median(phases, ydata, num_bins=70):
