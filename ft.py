@@ -42,6 +42,9 @@ def get_ceph_data(name):
     IOMC_dat = get_IOMC_data(number, period, ids[number])
     ASAS_dat = get_ASAS_data(name, period)
 
+    print ASAS_dat.shape
+    print IOMC_dat.shape
+
     if ASAS_dat.size != 1:
         print "ASAS data included"
         Ceph_data = np.concatenate([IOMC_dat, ASAS_dat], 0)
@@ -67,12 +70,14 @@ def get_ASAS_data(name, period):
         old_asasgd = old_arr2[oldasas_grade[old_arr2] == 'A']
         old_len = len(old_asasgd)
         m2_old = oldasas['m2']
-        m2_asasiomc_old = asas_old['m2'] - 0.03 #to make the data agree with the v-band magnitude from IOMC
+        oldasas_e2 = oldasas['e2']
+        m2_asasiomc_old = oldasas['m2'] - 0.03 #to make the data agree with the v-band magnitude from IOMC
         old_shape = (old_len, 1)
         old_phases = oldasas_phase[old_asasgd]
         old_m2 = m2_old[old_asasgd]
         dates = oldasas_date[old_asasgd]
         epochs = oldasas_epochs[old_asasgd]
+        e2 = oldasas_e2[old_asasgd]
     
         asas_new = np.genfromtxt(new_asas_file, dtype=None, names = ['asasdate', 'm2', 'm0', 'm1', 'm3', 'm4', 'e2', 'e0', 'e1', 'e3', 'e4', 'grade', 'frame'])
         new_asasdate = asas_new['asasdate'] + 50000.0
@@ -83,12 +88,14 @@ def get_ASAS_data(name, period):
         new_asasgd = new_arr2[grade_new[new_arr2] == 'A']
         new_len = len(new_asasgd)
         m2_new = asas_new['m2']
+        e2_new = asas_new['e2']
         m2_asasiomc_new = asas_new['m2'] - 0.03
         new_m2 = m2_new[new_asasgd] + 0.01
         n_m2 = m2_new[new_asasgd]
         new_phases = new_asasphase[new_asasgd]
         new_dates = new_asasdate[new_asasgd]
         new_epochs = new_asasepoch[new_asasgd]
+        new_e2 = e2_new[new_asasgd]
         
         total_len = old_len + new_len
         arrshape = (total_len, 1)
@@ -101,10 +108,12 @@ def get_ASAS_data(name, period):
         m2.shape = arrshape
         phases = np.concatenate([old_phases, new_phases],1)
         phases.shape = arrshape
+        e2 = np.concatenate([e2, new_e2], 1)
+        e2.shape = arrshape
         
         print "new ASAS data available"
     
-        ceph_arr = np.hstack([dates, m2, epochs, phases])
+        ceph_arr = np.hstack([dates, m2, epochs, phases, e2])
         return ceph_arr
     elif os.path.isfile(old_asas_file) != False:
         oldasas = np.genfromtxt(old_asas_file, dtype=None, names = ['asasdate', 'm2', 'm0', 'm1', 'm3', 'm4', 'e2', 'e0', 'e1', 'e3', 'e4', 'grade', 'frame'])
@@ -117,6 +126,7 @@ def get_ASAS_data(name, period):
         old_len = len(old_asasgd)
         arrshape = (old_len,1)
         m2_old = oldasas['m2']
+        oldasas_e2 = oldasas['e2']
         m2_asasiomc_old = oldasas['m2'] - 0.03 #to make the data agree with the v-band magnitude from IOMC
         old_phases = oldasas_phase[old_asasgd]
         old_phases.shape = arrshape
@@ -126,16 +136,18 @@ def get_ASAS_data(name, period):
         dates.shape = arrshape
         epochs = oldasas_epochs[old_asasgd]
         epochs.shape = arrshape
+        e2 = oldasas_e2[old_asasgd]
+        e2.shape = arrshape
         
         print "no new ASAS data available"
 
-        ceph_arr = np.hstack([dates, old_m2, epochs, old_phases])
+        ceph_arr = np.hstack([dates, old_m2, epochs, old_phases, e2])
         return ceph_arr
     else:
         return np.empty(1)
 #
 #   Gets the IOMC data for the Cepheid.
-#   Final columns go in order of: mjd, mag_v, epoch, phase
+#   Final columns go in order of: mjd, mag_v, epoch, phase, err
 #
 
 def get_IOMC_data(number, period, id):
@@ -170,8 +182,10 @@ def get_IOMC_data(number, period, id):
     phase.shape = arrshape
     epochs = np.fix(mjd/period)
     epochs.shape = arrshape
+    errmag_v = errmag_v[gd]
+    errmag_v.shape = arrshape
     
-    ceph_arr = np.hstack([mjd, mag_v, epochs, phase])
+    ceph_arr = np.hstack([mjd, mag_v, epochs, phase, errmag_v])
 
     return ceph_arr
 
@@ -207,9 +221,10 @@ def fold_data(t, y, period, num=2):
     else:
         return phases, ydata
 
-# 
-# Simpler median extraction--just bin by bins of set size. Unless the number of bins is specified, it will just do about 70 bins per cycle
+# ipython notebook for the steve stuff
+# Simpler median extraction--just bin by bins of set size. Unless the number of bins is specified, it will just do about 50 bins per cycle
 #
+#   Empty bins get taken out
 
 def get_median(phases, ydata, num_bins=70):
     #   total number of bins = bins
@@ -220,9 +235,15 @@ def get_median(phases, ydata, num_bins=70):
     bins = np.linspace(0, math.ceil(num_phases), nbins)
     delta = bins[1] - bins[0]
     idx = np.digitize(phases, bins)
-    running_median = [np.median(ydata[idx == k]) for k in range(nbins)]
+    running_median = np.asarray([np.median(ydata[idx == k]) for k in range(nbins)])
     phase_medians = bins - delta/2
-    return phase_medians, running_median
+    
+    #   necessary to slice before returning to remove the nan elements
+    gd = np.where(np.logical_not(np.isnan(running_median)))[0]
+    gd_pm = phase_medians[gd]
+    gd_rm = running_median[gd]
+    
+    return gd_pm, gd_rm
 """
     #   plot as a test
     plt.scatter(phases, ydata, color='k', alpha=0.2, s=2)
@@ -338,21 +359,27 @@ def error_series(params, xdata, ydata, order, period):
     return cosine_series(params, xdata, order, period) - ydata
 
 #
-#   New approach. The input parameters may just be the guess for the original mode
+#  Switched around the order of the parameters so that they make more sense.
 #
 
 def cosine_series(params, xdata, order, period):
-    fund_mode = params[0]*np.cos(2*np.pi/period*xdata + params[1]) + params[2]
-    if order > 1:
-        sum_func = fund_mode
-        for i in (np.arange(order-1) + 2):
-            sum_func = fund_mode + params[i+1]*np.cos(2*np.pi/(2*period)*xdata + params[i+2])
-    else:
-        sum_func = fund_mode
+    sum_func = params[0]
+    for i in np.arange(order) + 1:
+        sum_func = sum_func + params[2*i-1]*np.cos(2*i*np.pi/(period)*xdata + params[2*i])
     return sum_func
+"""
+    if order > 1:
+        sum_func =
+        for i in (np.arange(order-1) + 2):
+            sum_func = sum_func + params[i*2-1]*np.cos(2*np.pi/(2*period)*xdata + params[i*2])
+    else:
+        sum_func = params[1]*np.cos(2*np.pi/period*xdata + params[2]) + params[0]
+"""
+
 
 #
-#   New version of fourier fit. Currently is able to fit to a certain mode that you input. Need to change it to so that it will fit to any mode, depending on the errors.
+#   New version of fourier fit. Currently is able to fit to a certain mode that you input.
+#   Update with BIC penalty. Chose 7 because that seems to be the fit order that most people use. Changed to 4 because it was clearly overfitting some of them.
 #
 
 def fourier_series(mjd, mag, name, order=1.):
@@ -362,13 +389,13 @@ def fourier_series(mjd, mag, name, order=1.):
     amplitude = approximate_amplitude(mjd, mag)
     zeroed_mag = mag - median
     
-    p0 = [amplitude, 0., median]
+    p0 = [median, amplitude, 0.]
     
     p1, success = optimize.leastsq(error_series, p0, args=(mjd, mag, order, period))
     errors = np.sum(np.power(error_series(p1, mjd, mag, order, period), 2))
     add_order = True
     
-    while (add_order == True) & (order < 6):
+    while (add_order == True) & (order < 4):
         order = order + 1
         p00 = np.concatenate([p1, [0.02, 0.]])
         p2, success = optimize.leastsq(error_series, p00, args=(mjd, mag, order, period))
@@ -378,22 +405,27 @@ def fourier_series(mjd, mag, name, order=1.):
             errors = errors2*1.
         else:
             add_order = False
-            order = order - 1
+#   order = order - 1
     
-    # time = np.linspace(mjd.min(), mjd.max(), 300)
-    time = np.linspace(53500, 53600, 300)
-    plt.plot(mjd, mag, "ro", time, cosine_series(p1, time, order, period), "r-")
-    plt.ylim([min(y), heapq.nlargest(2, y)[1]])
-    plt.xlim([53500, 53600])
-    print 'INITIAL GUESS' + '\n' + 'Amplitude:', p0[0],'\n' + 'Phase Shift: ', p0[1], '\n' + 'Offset: ', p0[2], '\n'
-    print 'FIT PARAMETERS' + '\n' + 'Amplitude:', p1[0], '\n'  + 'Phase Shift: ', p1[1], '\n' + 'Offset: ', p1[2], '\n'
+    time = np.linspace(mjd.min(), mjd.max(), 300)
+    #   time = np.linspace(53500, 53600, 300)
+    plt.scatter(mjd, mag, alpha=0.4, color='grey')
+    plt.plot(time, cosine_series(p2, time, order, period), "r-")
+    plt.gca().invert_yaxis()
+    #   plt.ylim([min(y), heapq.nlargest(2, y)[1]])
+    #   plt.xlim([53500, 53600])
+    print 'INITIAL GUESS' + '\n' + 'Amplitude:', p0[1],'\n' + 'Phase Shift: ', p0[2], '\n' + 'Offset: ', p0[0], '\n'
+    print 'FIT PARAMETERS' + '\n' + 'Amplitude:', p1[1], '\n'  + 'Phase Shift: ', p1[2], '\n' + 'Offset: ', p1[0], '\n'
     print 'SUMMED ERRORS: ', errors
     print 'FIT ORDER: ', order
     print 'PERIOD: ', period
     print p1
     print p2
+    #   plt.savefig('xycar_template.png')
 
     plt.show()
+
+    return p2, order
 
 #fixed_per = p1[1]
 #p11 = [p1[0], 1., p1[2], p1[3]]
@@ -402,3 +434,12 @@ def fourier_series(mjd, mag, name, order=1.):
 #function2 = cosine_func(p1, mjd)
 #p2, success = optimize.leastsq(error_func2, p11, args=(cosine_orders, function2, mjd, mag, order, fixed_per))
 #errors2 = np.sum(np.power(error_func2(cosine_orders, function2, p2, mjd, mag, order, period), 2))
+
+
+#
+#   Some alternative code below. Note that this includes error bars.
+#
+"""
+class Fourier(object):
+
+"""
