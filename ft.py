@@ -204,13 +204,23 @@ def approximate_amplitude(t, y):
 #   Fold the data and then spit out the number of cycles needed, generally set to 2. Can give this the mjd and mag from the other parts and it will fold it. Then extract median will extract the median of the points and finally that can go into the fourier series.
 #
 
-def fold_data(t, y, period, num=2):
+def fold_data(t, y, period, err=0, num=2):
     phase = t/period - np.fix(t/period)
     phases = phase*1.
     ydata = y*1.
+    errors = err*1.
     print num
     x = 0
-    if num > 1:
+    if (num > 1) & (isinstance(err, int) != True):
+        for i in (np.arange(num-1) + 2):
+            x += 1
+            print x
+            add_phase = phase + (i-1.)
+            phases = np.concatenate([phases, add_phase])
+            ydata = np.concatenate([ydata, y])
+            errors = np.concatenate([errors, err])
+        return phases, ydata, errors
+    elif (num > 1):
         for i in (np.arange(num-1) + 2):
             x += 1
             print x
@@ -218,6 +228,8 @@ def fold_data(t, y, period, num=2):
             phases = np.concatenate([phases, add_phase])
             ydata = np.concatenate([ydata, y])
         return phases, ydata
+    elif (isinstance(err, int) != True):
+        return phases, ydata, errors
     else:
         return phases, ydata
 
@@ -225,8 +237,9 @@ def fold_data(t, y, period, num=2):
 # Simpler median extraction--just bin by bins of set size. Unless the number of bins is specified, it will just do about 50 bins per cycle
 #
 #   Empty bins get taken out
+#   Get an approximate measurement of error by adding up the errors and dividing by the number of things in a bin. Fix this to make it actually sound later.
 
-def get_median(phases, ydata, num_bins=70):
+def get_median(phases, ydata, errors=0, num_bins=70):
     #   total number of bins = bins
     num_phases = max(phases)
     nbins = int(num_bins*math.ceil(num_phases))
@@ -238,12 +251,18 @@ def get_median(phases, ydata, num_bins=70):
     running_median = np.asarray([np.median(ydata[idx == k]) for k in range(nbins)])
     phase_medians = bins - delta/2
     
-    #   necessary to slice before returning to remove the nan elements
     gd = np.where(np.logical_not(np.isnan(running_median)))[0]
     gd_pm = phase_medians[gd]
     gd_rm = running_median[gd]
     
-    return gd_pm, gd_rm
+    if (errors.size > 1):
+        err = np.asarray([np.average(errors[idx == k]) for k in gd])
+        
+        #   necessary to slice before returning to remove the nan elements
+        
+        return gd_pm, gd_rm, err
+    else:
+        return gd_pm, gd_rm, 0
 """
     #   plot as a test
     plt.scatter(phases, ydata, color='k', alpha=0.2, s=2)
@@ -395,7 +414,7 @@ def fourier_series(mjd, mag, name, order=1.):
     errors = np.sum(np.power(error_series(p1, mjd, mag, order, period), 2))
     add_order = True
     
-    while (add_order == True) & (order < 4):
+    while (add_order == True) & (order < 5):
         order = order + 1
         p00 = np.concatenate([p1, [0.02, 0.]])
         p2, success = optimize.leastsq(error_series, p00, args=(mjd, mag, order, period))
