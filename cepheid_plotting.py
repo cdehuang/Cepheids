@@ -6,6 +6,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import cm
+import heapq
 
 #   Makes a plot in "the usual" way where the periods are doubled
 #
@@ -27,14 +28,14 @@ def standard_plot(t, y, period, name='none'):
     yy = np.concatenate([sorted_y, sorted_y], 1)
     mi = min(y)
     plt.clf()
-    plt.scatter(pp, yy, alpha=0.7, color='grey')
+    plt.scatter(pp, yy, alpha=0.7, color='blue')
     plt.gca().invert_yaxis()
     plt.text(-0.4, mi, "period = {} days".format(period), fontsize=14)
     plt.xlabel("phase")
     plt.ylabel("V-band magnitude")
     if name !='none':
         plt.title("{}".format(name))
-        plt.savefig("../output/{}_standard.png".format(name))
+        plt.savefig("../output/{}_{}_standard.png".format(name, period))
     plt.show()
 
 #   Returns the array to let you make a standard plot, but doesn't actually make the plot (which standard_plot does)
@@ -55,6 +56,20 @@ def splot_array(t, y, period):
     yy = np.concatenate([sorted_y, sorted_y], 1)
     return pp, yy
 
+#   Returns the array to let you make a standard plot, but the phases are not sorted.
+#
+#   Parameters:
+#   t = the dates
+#   y = the magnitudes
+#   period = the cepheid's period
+
+def plot_array(t, y, period):
+
+    phase = (t/period)*1.0 - np.fix(t/period)
+    pp = np.concatenate([phase, phase+1.0], 1)
+    yy = np.concatenate([y, y], 1)
+    return pp, yy
+
 #   Makes a plot in which the epochs are color-coded using heatmap coloring (earliest in red, latest in blue)
 #
 #   Parameters:
@@ -73,7 +88,8 @@ def epoch_plot(t, y, period, name='none'):
     yy = np.concatenate([sorted_y, sorted_y], 1)
     epochs = np.fix(sorted_dates/period)
     epoch_list = set(epochs)
-    mi = min(y)
+    mi = min(y)-0.15
+    ma2 = heapq.nlargest(2, y)[1]
     plt.clf()
     x = 0
     for i in epoch_list:
@@ -85,12 +101,14 @@ def epoch_plot(t, y, period, name='none'):
         yy = np.concatenate([period_mags, period_mags], 1)
         plt.scatter(pp, yy, color=cm.jet(1.*x/len(epoch_list)), alpha=0.7, edgecolors='none')
         x +=1
-    plt.gca().invert_yaxis()
-    plt.text(-0.4, mi, "period = {} days".format(period), fontsize=14)
+    print ma2, mi
+    plt.ylim(ma2, mi)
+    #plt.gca().invert_yaxis()
+    plt.text(-0.4, mi+0.1, "period = {} days".format(period), fontsize=14)
     plt.xlabel("phase")
     plt.ylabel("V-band magnitude")
     if name !='none':
-        plt.title("{}".format(name))
+        #plt.title("{}".format(name))
         plt.savefig("../output/{}_epoch.png".format(name))
     plt.show()
 
