@@ -13,6 +13,8 @@
     5. With the output phases from this folding, compare with the magnitude that the Cepheid would be at for that part of its phase (based off of the template).
     6. Minimize with weighted least squares, but trying a grid of different alphas, etc.
     7. Test and see if you can recover your result.
+    
+    Things to test: in addition to alpha, change the start date of the shift
 """
 
 import numpy as np
@@ -25,23 +27,29 @@ import change_period as chper
 import pdm
 import period_fitting as pf
 
-def ceph_fold(mjd, period, alpha):
+def ceph_fold(mjd, period, alpha, func=None, d0=0):
     """
         Takes in some dates and a starting period and then a period change of alpha. Folds the cepheids in just a little complicated manner
         
         Returns the phases.
-        """
+    """
     phases = []
     #   zero the julian dates
     #mjd = mjd - min(mjd)
-    for i in mjd:
-        period_new = period + alpha*(i-min(mjd))
-        phase = i/period_new - np.fix(i/period_new)
-        phases.append(phase)
+    if func == None:
+        for i in mjd:
+            period_new = period + alpha*(i+d0-min(mjd))
+            phase = i/period_new - np.fix(i/period_new)
+            phases.append(phase)
+    else:
+        for i in mjd:
+            period_new = period + func((i+d0-min(mjd))/alpha)
+            phase = i/period_new - np.fix(i/period_new)
+            phases.append(phase)
     return phases
 
-def fold_error_func(alpha, mjd, mag_v, coeff, period, errors, order):
-    new_phases = ceph_fold(mjd, period, alpha)
+def fold_error_func(alpha, d0, mjd, mag_v, coeff, period, errors, order):
+    new_phases = ceph_fold(mjd, period, alpha, d0=d0)
     template_magnitudes = []
     for i in new_phases:
         template_magnitudes.append(ft.cosine_series_phase(coeff, i, order))
@@ -49,23 +57,34 @@ def fold_error_func(alpha, mjd, mag_v, coeff, period, errors, order):
     template_magnitudes = np.asarray(template_magnitudes)
     return np.asarray((template_magnitudes- mag_v)/errors)
 
-def find_sec_change(mjd, mag_v, coeff, period, mag_v_err, order, alpha=0.0):
+def find_sec_change(mjd, mag_v, coeff, period, mag_v_err, order, num_alpha=201, alpha=0.0, d0=0):
     """
         Tests out a grid of values around an initial guess for alpha.
         
         Basically takes the mjd and the magnitudes of the cepheid, folds the data with various functions, and then for each resulting phase, compares it with the phase point using just the template.
     """
-    alpha_range = np.linspace(-0.000005+alpha, 0.000005+alpha, 201)
-    total_error = []
-    for i in alpha_range:
-        print "Now trying alpha =", i
-        i_errors = fold_error_func(i, mjd, mag_v, coeff, period, mag_v_err, order)
-        i_errors = np.asarray([b**2 for b in i_errors])
-        tot_error = np.sum(i_errors)
-        total_error.append(tot_error)
-    min_ind = np.argmin(total_error)
+    alpha_range = np.linspace(-0.000005+alpha, 0.000005+alpha, num_alpha)
+    #total_error = []
+    num_points = len(mjd)
+    red_chisq_n = num_points - 2
+    #d0_range = np.linspace(-1000, 1000, 51)
+    d0_range = [0]
+    red_chisq = []
+    for d in d0_range:
+        print "Now trying d0 =", d
+        for i in alpha_range:
+            #print "Now trying alpha =", i
+            i_errors = fold_error_func(i, d, mjd, mag_v, coeff, period, mag_v_err, order)
+            #i_errors = np.asarray([b**2 for b in i_errors])
+            #tot_error = np.sum(i_errors)
+            tot_error = (np.array(i_errors)**2).sum()
+            #total_error.append(tot_error)
+            red_chisq.append(tot_error/red_chisq_n)
+#   min_ind = np.argmin(total_error)
+    min_ind = np.argmin(red_chisq)
     best_fit_alpha = alpha_range[min_ind]
-    return best_fit_alpha
+    #best_d0 = d0_range[min_ind]
+    return best_fit_alpha, red_chisq
 
 def find_sec_chng(phases, good_mjd, mag_v, coeff, period, mag_v_err, order, alpha=0.0):
     """
@@ -119,12 +138,11 @@ def unfold_simple(phases, mjd, start_period, alpha):
 
 #####
 
-#   Suggestion from Kevin to make fake data--just change the frequency in the cosine function to have it depend on time like the function you want. Then you have template "fake" data.
-
 #   plot everything doubled and see how well it agrees
 
 if __name__=="__main__":
     cepheid = 'xycar'
+    #cepheid = 'svul'
     ceph_data = ft.get_sorted_data(cepheid)
     mjd = ceph_data[:,0]
     mag_v = ceph_data[:,1]
@@ -143,67 +161,75 @@ if __name__=="__main__":
     
     period = ft.get_period(cepheid)
     alpha = 0.0000001
-    
-    #   change the period of the cepheid
-    #new_mjds, new_periods = chper.secular_change(good_mjd, period, 0.001)
 
     #   make a template cepheid
-    #coeff, order = ft.fs_wtlsq(good_mjd, good_mag_v, cepheid, good_mag_v_err, order=7)
+    coeff, order = ft.fs_wtlsq(good_mjd, good_mag_v, cepheid, good_mag_v_err, order=7)
     #per, theta = pdm.find_period_arb(new_mjds, good_mag_v, period)
     #per, theta = pf.PDM_precise(new_mjds, good_mag_v, period)
     
-    #   create template "real" cepheid data
-    coeff, order = ft.fs_wtlsq(good_mjd, good_mag_v, cepheid, good_mag_v_err, order=7)
-    shifted_mags = ft.evolving_cosine(coeff, good_mjd, 7, period, alpha, ft.linear_per_change, min_date = min(mjd))
-    
+    #   create cepheid data with some complex phase.
+    shifted_mags = ft.evolving_cosine(coeff, good_mjd, 4, period, alpha, ft.linear_per_change, min_date = min(mjd))
     shifted_phases = good_mjd/period - np.fix(good_mjd/period)
     test_phases = np.asarray(ceph_fold(good_mjd, period, alpha))
+    
+    #   add in some Gaussian noise
+    noise = np.random.normal(0, 0.03, len(shifted_mags))
+    mags_with_noise = shifted_mags + noise
 
-    #new_phases = ceph_fold(good_mjd, period, alpha)
-    #new_phases = new_mjds/per - np.fix(new_mjds/per)
-    #new_mjds = unfold_simple(new_phases, mjd, period, alpha)
+    #   can't really make an o-c diagram now because instead of shifting the dates as I was before, I am now just shifting the magnitudes.
     
-    #temp_mags = ft.cosine_series(coeff, good_mjd, order, period)
-    #temp_st_phs = good_mjd/period - np.fix(good_mjd/period)
-    
+    phase_points = np.linspace(0, 1.0, 201)
+    template_mags = ft.cosine_series_phase(coeff, phase_points, order)
+
     #   plot to make sure that it's actually doing that
-    plt.scatter(shifted_phases, shifted_mags, color='red', alpha=0.3)
-    plt.scatter(good_phases, good_mag_v, color='grey', alpha=0.3)
+    plt.scatter(shifted_phases, mags_with_noise, color='red', alpha=0.3)
+    #plt.scatter(good_phases, good_mag_v, color='red', alpha=0.3)
+    #plt.scatter(good_phases, good_mag_v, color='grey', alpha=0.3)
     plt.scatter(test_phases, shifted_mags, color='blue', alpha=0.3)
-    #plt.gca().invert_yaxis()
+    #plt.scatter(phase_points, template_mags, color='blue', alpha=0.3)
+    plt.gca().invert_yaxis()
+    plt.xlabel("Phase")
+    plt.ylabel("V-Band Magnitude")
+    plt.savefig("../output/{}_real_data.png".format(cepheid))
+    plt.show()
+    
+    
+    num_alpha = 201
+    #sys.exit()
+    #   find the change that works the best
+    #best_alpha, chi_squares = find_sec_change(good_mjd, mags_with_noise, coeff, period, good_mag_v_err, order)
+    best_alpha, chi_squares = find_sec_change(good_mjd, good_mag_v, coeff, period, good_mag_v_err, order, num_alpha=num_alpha)
+    best_phases = np.asarray(ceph_fold(good_mjd, period, best_alpha))
+    temp_mags = ft.cosine_series_phase(coeff, best_phases, order)
+    temp_phases = np.asarray(ceph_fold(good_mjd, period, best_alpha))
+    alpha_range = np.linspace(-0.000005+alpha, 0.000005+alpha, num_alpha)
+    
+    plt.scatter(alpha_range, chi_squares, color='grey', alpha=0.3)
+    plt.xlim([-0.000006, 0.000006])
+    plt.ylabel("Chi-Square")
+    plt.xlabel("Alpha")
+    plt.savefig("../output/{}_real_chi_squares.png".format(cepheid))
     plt.show()
     
     #sys.exit()
-    #test_phases = np.linspace(0, 1.0, 1000)
-    #template_mags = ft.cosine_series_phase(coeff, test_phases, order)
-    
-    #plt.scatter(new_phases, good_mag_v, color='red', alpha=0.3)
-    #plt.scatter(test_phases, template_mags, color='grey', alpha=0.3)
-    #plt.gca().invert_yaxis()
-    #plt.show()
-    
-    #   get the period
-    #period = ft.get_period(cepheid)
 
-    #   find the change that works the best
-    best_alpha = find_sec_change(good_mjd, shifted_mags, coeff, period, good_mag_v_err, order)
-    #best_alpha = 0.0
+    #   repeat once for the plotting
+    x, y = duplicate(best_phases, mags_with_noise)
+    #x, y = duplicate(best_phases, good_mag_v)
+    #xor, yor = duplicate(temp_phases, temp_mags)
+    #xor, yor = duplicate(good_phases, good_mag_v)
+    xor, yor = duplicate(shifted_phases, mags_with_noise)
 
-    best_phases = np.asarray(ceph_fold(good_mjd, period, best_alpha))
-    
-
-    #   template magnitudes
-    template_mags = ft.cosine_series_phase(coeff, best_phases, order)
-
-    x, y = duplicate(best_phases, shifted_mags)
-    #xor, yor = duplicate(best_phases, template_mags)
-
-    #phases_real = good_mjd/period - np.fix(good_mjd/period)
-
-    plt.scatter(x, y, color='red', alpha=0.3)
-    plt.scatter(xor, yor, color='grey', alpha=0.3)
-    plt.scatter(test_phases, shifted_mags, color='blue', alpha=0.3)
+    #plt.scatter(x, y, color='grey', alpha=0.3)
+    plt.scatter(best_phases, good_mag_v, color='grey', alpha=0.3)
+    plt.scatter(good_phases, good_mag_v, color='red', alpha=0.3)
+    #plt.scatter(xor, yor, color='blue', alpha=0.3)
+    #plt.scatter(xor, yor, color='red', alpha=0.3)
+    #plt.scatter(test_phases, shifted_mags, color='blue', alpha=0.3)
     plt.gca().invert_yaxis()
+    plt.ylabel("V-Band Magnitudes")
+    plt.xlabel("Phase")
+    plt.savefig("../output/{}_fake_final.png".format(cepheid))
     plt.show()
 
 
