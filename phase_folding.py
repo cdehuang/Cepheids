@@ -6,19 +6,12 @@
 """
     Steps:
     
-    1. Use pdm analysis to find the best fit period.--at the moment the fourier analysis problem just uses the literature period though
-    2. May want to do a three-sigma clip on the real data, if you are using real data. 
-    3. Create a template using the best fit period and the Cepheid data. 
-    4. Take real data and fold with a changing period.
-    5. With the output phases from this folding, compare with the magnitude that the Cepheid would be at for that part of its phase (based off of the template).
-    6. Minimize with weighted least squares, but trying a grid of different alphas, etc.
-    7. Test and see if you can recover your result.
-    
     Things to test: in addition to alpha, change the start date of the shift
 """
 
 import numpy as np
 from scipy import optimize
+import scipy.stats
 import sys
 import matplotlib.pyplot as plt
 
@@ -86,6 +79,32 @@ def find_sec_change(mjd, mag_v, coeff, period, mag_v_err, order, num_alpha=201, 
     #best_d0 = d0_range[min_ind]
     return best_fit_alpha, red_chisq
 
+def sec_change_per(mjd, mag_v, coeff, period, mag_v_err, order, num_periods=51,num_alpha=51, alpha=0.0, d0=0, a_range=0.000001, p_range=0.25):
+    """
+        Tests out a grid of values around an initial guess for alpha and period.
+        
+        Basically takes the mjd and the magnitudes of the cepheid, folds the data with various functions, and then for each resulting phase, compares it with the phase point using just the template.
+    """
+    alpha_range = np.linspace(-a_range+alpha, a_range+alpha, num_alpha)
+    #total_error = []
+    num_points = len(mjd)
+    num_params = 2
+    red_chisq_n = num_points - num_params # check this later
+    per_range = np.linspace(-p_range + period, p_range + period, num_periods)
+    # make an array of the appropriate size and populate it?
+    red_chisq_arr = np.zeros((num_periods, num_alpha))
+    for p in np.arange(len(per_range)):
+        print "Now trying period =", per_range[p]
+        for i in np.arange(len(alpha_range)):
+            i_errors = fold_error_func(alpha_range[i], 0, mjd, mag_v, coeff, per_range[p], mag_v_err, order)
+            tot_error = (np.array(i_errors)**2).sum()
+            red_chisq_arr[p, i] = tot_error/red_chisq_n
+    flat_ind = red_chisq_arr.argmin()
+    bests = np.unravel_index(flat_ind, red_chisq_arr.shape)
+    best_fit_period = per_range[bests[0]]
+    best_fit_alpha = alpha_range[bests[1]]
+    return best_fit_alpha, best_fit_period, red_chisq_arr
+
 def find_sec_chng(phases, good_mjd, mag_v, coeff, period, mag_v_err, order, alpha=0.0):
     """
         It would be better if this were given in terms of phases...
@@ -134,6 +153,63 @@ def unfold_simple(phases, mjd, start_period, alpha):
         mjd.append(mjd_el)
     mjd = np.asarray(mjd)
     return mjd
+
+def best_chi(chi_square_array):
+    """
+        Stupid function for finding the best chi_square in an array of chi_squares
+    """
+    flat_midx = chi_square_array.argmin()
+    best_idx = np.unravel_index(flat_midx, chi_square_array.shape)
+    best_chi_square = chi_square_array[best_idx]
+    return best_chi_square
+
+def min_bin(data, nbins=20, min_elements=15, bin_min=0.0, bin_max=1.0, bins=None):
+    """
+       Returns the bin widths that bin the data, but combines bins that have fewer than 15 points (default) per bin.
+    """
+    if bins==None:
+        bins = np.linspace(bin_min, bin_max, nbins+1)
+        #print bins
+    hist = np.digitize(data, bins)
+    while len(np.where(np.bincount(hist)< min_elements)[0]) > 1:
+        combine_bins = np.where(np.bincount(hist) < min_elements)[0]
+        comb_bins = combine_bins[1:len(combine_bins)]
+        for i in comb_bins:
+            #print "number of bins", len(bins)
+            #print "bin to delete", i
+            bins = np.delete(bins, i)
+            hist = np.digitize(data, bins)
+            if np.where(np.bincount(hist)< min_elements) > 1:
+                break
+    return bins
+
+def simple_sigma_clip(mag_v, phases, sigma=3, nbins=20, min_elements=15):
+    """
+        Bins the data, then clips points that fall more than 3 sigma off of the median value, as determined by the variance of the bin (default). Sets a minimum number of points per bin to be 15.
+        
+        Returns the indicies of the good data.
+    """
+    good_bins = min_bin(phases, nbins=nbins, bin_min=0.0, bin_max=1.0)
+    binned_dat_medians = scipy.stats.binned_statistic(phases, mag_v, bins=good_bins, statistic='median')
+    binned_dat_errors = scipy.stats.binned_statistic(phases, mag_v, bins=good_bins, statistic=np.std)
+    medians = binned_dat_medians[0]
+    sigmas = binned_dat_errors[0]
+    cut = sigmas*sigma
+    bin_numbers = binned_dat_medians[2]
+    unique_bin_numbers = set(bin_numbers)
+    good_inds = []
+    for i in unique_bin_numbers:
+        inds = np.where(bin_numbers == i)[0]
+        median_pt = medians[i-1]
+        sig_range = cut[i-1]
+        for n in inds:
+            if ((median_pt - sig_range) < mag_v[n]) & (mag_v[n] < (median_pt + sig_range)):
+                good_inds.append(n)
+    return np.asarray(good_inds)
+
+def better_sigma_clip():
+    print "TODO"
+
 
 
 #####
