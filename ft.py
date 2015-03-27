@@ -723,6 +723,162 @@ def fourier_series(mjd, mag, name, order=7):
 
 #   want to do a weighted least squares fit
 
+def fs_wtlsq_BIC(mjd, mag, name, errs, period=None, order=7):
+    """
+        This is the main fitting program I'm using at the moment for fourier series at least. It fits with least squares.
+        Now try to add in an information criterion
+    """
+    #   initial guess for period
+    ord = 1.
+    if period==None:
+        period = get_period(name)
+    median = approximate_median(mjd, mag)
+    amplitude = approximate_amplitude(mjd, mag)
+    zeroed_mag = mag - median
+    
+    p0 = [median, amplitude, 0.]
+    
+    #   least squares from python finds the parameters that minimize the error function, which is the difference between the model and the actual parameters
+    p1, success = optimize.leastsq(weighted_error_series, p0, args=(mjd, mag, ord, period, errs))
+    errors = np.sum(np.power(weighted_error_series(p1, mjd, mag, ord, period, errs), 2))
+    add_order = True
+    n = len(mjd)
+    
+    while (add_order == True) & (ord < order):
+        ord2 = ord + 1
+        p00 = np.concatenate([p1, [0.02, 0.]])
+        p2, success = optimize.leastsq(weighted_error_series, p00, args=(mjd, mag, ord2, period, errs))
+        errors2 = np.sum(np.power(weighted_error_series(p2, mjd, mag, ord2, period, errs), 2))
+        #rederrors2 = errors2/
+        k = 1 + ord*2.
+        BIC = n*np.log(errors/n) + k*np.log(n)
+        k2 = 1 + ord2*2.
+        BIC2 = n*np.log(errors2/n) + k2*np.log(n)
+        print "Errors", errors, errors2
+        print "delta BIC", (BIC2-BIC)
+        print "order", ord2
+        if (BIC2-BIC) < 3:
+            p1 = p00*1.
+            errors = errors2*1.
+            ord = ord2
+        else:
+            add_order = False
+            ord = ord
+    #   order = order - 1
+    
+    time = np.linspace(mjd.min(), mjd.max(), 300)
+    #   time = np.linspace(53500, 53600, 300)
+    plt.scatter(mjd, mag, alpha=0.4, color='grey')
+    plt.plot(time, cosine_series(p2, time, ord, period), "r-")
+    plt.gca().invert_yaxis()
+    #   plt.ylim([min(y), heapq.nlargest(2, y)[1]])
+    #   plt.xlim([53500, 53600])
+    print 'INITIAL GUESS' + '\n' + 'Amplitude:', p0[1],'\n' + 'Phase Shift: ', p0[2], '\n' + 'Offset: ', p0[0], '\n'
+    print 'FIT PARAMETERS' + '\n' + 'Amplitude:', p1[1], '\n'  + 'Phase Shift: ', p1[2], '\n' + 'Offset: ', p1[0], '\n'
+    print 'SUMMED ERRORS: ', errors
+    print 'FIT ORDER: ', ord
+    print 'PERIOD: ', period
+    print p1
+    print p2
+    plt.ylabel("V-band Magnitude")
+    plt.xlabel("Days")
+    plt.title("{}".format(name))
+    
+    #   plt.savefig('xycar_alldata.png')
+    
+    plt.show()
+    
+    return p2, ord
+
+def fs_wtlsq_BIC2(mjd, mag, name, errs, period=None, order=7):
+    """
+        This is the main fitting program I'm using at the moment for fourier series at least. It fits with least squares.
+        Now try to add in an information criterion
+        
+        For some reason this version (which includes the part that extracts the best dates to fit with) doesn't work. So i'm going to just go with using the original BIC verson and writing a separate function for the extraction.
+    """
+    #   initial guess for period
+    ord = 1.
+    if period==None:
+        period = get_period(name)
+
+    ord = 1.
+    period = get_period(cepheid)
+    bin_width = period*4
+    date_range = max(mjd)-min(mjd)
+    nbins = np.around(date_range/bin_width)
+    histout = np.histogram(mjd, nbins)
+    binsizes = histout[0]
+    print "binsizes", binsizes
+    binedges = histout[1]
+    bbin = np.where(binsizes == max(binsizes))[0]
+    
+    maxidx = np.argmin(np.abs(mjd - binedges[bbin+1]))
+    minidx = np.argmin(np.abs(mjd - binedges[bbin]))
+    print "bbin", bbin, "maxidx", maxidx, "minidx", minidx
+
+    median = approximate_median(mjd, mag)
+    amplitude = approximate_amplitude(mjd, mag)
+    zeroed_mag = mag - median
+    
+    errs_tofit = errs[minidx:maxidx]
+    mjd_tofit = mjd[minidx:maxidx]
+    mag_tofit = mag[minidx:maxidx]
+    
+    p0 = [median, amplitude, 0.]
+    
+    #   least squares from python finds the parameters that minimize the error function, which is the difference between the model and the actual parameters
+    p1, success = optimize.leastsq(weighted_error_series, p0, args=(mjd_tofit, mag_tofit, ord, period, errs_tofit))
+    errors = np.sum(np.power(weighted_error_series(p1, mjd_tofit, mag_tofit, ord, period, errs_tofit), 2))
+    add_order = True
+    n = len(mjd_tofit)
+    
+    while (add_order == True) & (ord < order):
+        ord2 = ord + 1
+        p00 = np.concatenate([p1, [0.02, 0.]])
+        p2, success = optimize.leastsq(weighted_error_series, p00, args=(mjd_tofit, mag_tofit, ord2, period, errs_tofit))
+        errors2 = np.sum(np.power(weighted_error_series(p2, mjd_tofit, mag_tofit, ord2, period, errs_tofit), 2))
+        #rederrors2 = errors2/
+        k = 1 + ord*2.
+        BIC = n*np.log(errors/n) + k*np.log(n)
+        k2 = 1 + ord2*2.
+        BIC2 = n*np.log(errors2/n) + k2*np.log(n)
+        print "Errors", errors, errors2
+        print "delta BIC", (BIC2-BIC)
+        print "order", ord2
+        if (BIC2-BIC) < 3:
+            p1 = p00*1.
+            errors = errors2*1.
+            ord = ord2
+        else:
+            add_order = False
+            ord = ord
+    #   order = order - 1
+    
+    time = np.linspace(mjd_tofit.min(), mjd_tofit.max(), 300)
+    #   time = np.linspace(53500, 53600, 300)
+    plt.scatter(mjd_tofit, mag_tofit, alpha=0.4, color='grey')
+    plt.plot(time, cosine_series(p2, time, ord, period), "r-")
+    plt.gca().invert_yaxis()
+    #   plt.ylim([min(y), heapq.nlargest(2, y)[1]])
+    #   plt.xlim([53500, 53600])
+    print 'INITIAL GUESS' + '\n' + 'Amplitude:', p0[1],'\n' + 'Phase Shift: ', p0[2], '\n' + 'Offset: ', p0[0], '\n'
+    print 'FIT PARAMETERS' + '\n' + 'Amplitude:', p1[1], '\n'  + 'Phase Shift: ', p1[2], '\n' + 'Offset: ', p1[0], '\n'
+    print 'SUMMED ERRORS: ', errors
+    print 'FIT ORDER: ', ord
+    print 'PERIOD: ', period
+    print p1
+    print p2
+    plt.ylabel("V-band Magnitude")
+    plt.xlabel("Days")
+    plt.title("{}".format(name))
+    
+    #   plt.savefig('xycar_alldata.png')
+    
+    plt.show()
+    
+    return p2, ord
+
 def fs_wtlsq(mjd, mag, name, errs, period=None, order=7):
     #   initial guess for period
     ord = 1.
@@ -827,20 +983,92 @@ def fs_wtlsq_lorentz(mjd, mag, name, errs, period=None, order=7):
     
     return p2, order
 
+def best_fit_dates(mjd, period, nperiods=4., minpoints=100):
+    """
+        Picks out a small range of mjd over which to fit the cepheid. If there isn't a section with > 50 data points, it keeps making the bins bigger.
+    
+    """
+    bin_width = period*nperiods
+    date_range = max(mjd)-min(mjd)
+    nbins = np.around(date_range/bin_width)
+    histout = np.histogram(mjd, nbins)
+    binsizes = histout[0]
+    biggest_bin = max(binsizes)
+    while(biggest_bin < minpoints):
+        print "Not enough data points. Resizing bins."
+        nperiods += 1
+        bin_width = period*nperiods
+        date_range = max(mjd)-min(mjd)
+        nbins = np.around(date_range/bin_width)
+        histout = np.histogram(mjd, nbins)
+        binsizes = histout[0]
+        biggest_bin = max(binsizes)
+    
+    binedges = histout[1]
+    bbin = np.where(binsizes == max(binsizes))[0]
+    print "binedges", binedges[bbin+1]
+    print "binedges", binedges[bbin]
+    
+    maxidx = np.argmin(np.abs(mjd - binedges[bbin+1]))
+    minidx = np.argmin(np.abs(mjd - binedges[bbin]))
+    
+    return bin_width, minidx, maxidx
 
-#fixed_per = p1[1]
-#p11 = [p1[0], 1., p1[2], p1[3]]
-#print p1
-#order = 2
-#function2 = cosine_func(p1, mjd)
-#p2, success = optimize.leastsq(error_func2, p11, args=(cosine_orders, function2, mjd, mag, order, fixed_per))
-#errors2 = np.sum(np.power(error_func2(cosine_orders, function2, p2, mjd, mag, order, period), 2))
 
-
-#
-#   Some alternative code below. Note that this includes error bars.
-#
 """
-class Fourier(object):
-
+    class Fourier(object):
+    
 """
+
+if __name__=="__main__":
+    
+    import phase_folding as pf
+
+    cepheid = 'aqpup'
+    real_period = get_period(cepheid)
+
+    ceph_data = get_sorted_data(cepheid)
+    mjd = ceph_data[:,0]
+    mag_v = ceph_data[:,1]
+    epochs = ceph_data[:,2]
+    phases = ceph_data[:,3]
+    mag_v_err = ceph_data[:,4]
+
+    good_ind = pf.simple_sigma_clip(mag_v, phases)
+    good_ceph_dat = ceph_data[good_ind]
+    good_mjd = mjd[good_ind]
+    sortinds = np.argsort(good_mjd)
+    sorted_good_ceph_dat = good_ceph_dat[sortinds]
+    good_mjd = good_mjd[sortinds]
+    good_mag_v = sorted_good_ceph_dat[:,1]
+    good_epochs = sorted_good_ceph_dat[:,2]
+    good_phases = sorted_good_ceph_dat[:,3]
+    good_mag_v_err = sorted_good_ceph_dat[:,4]
+
+    #coeff, order = fs_wtlsq(good_mjd, good_mag_v, cepheid, good_mag_v_err, order=12)
+
+    binwidth, minidx, maxidx = best_fit_dates(good_mjd, period)
+    mjd_tofit = mjd[minidx:maxidx]
+    mag_tofit = mag_v[minidx:maxidx]
+    phs_tofit = phases[minidx:maxidx]
+    err_tofit = mag_v_err[minidx:maxidx]
+
+    plt.clf()
+    plt.scatter(phs_tofit, mag_tofit)
+    plt.show()
+    
+    coeff2, order2 = fs_wtlsq_BIC(mjd_tofit, mag_tofit, cepheid, err_tofit, period=real_period, order=30)
+
+    num_phase = 201 # this is just the number of phase points for the plot, won't really affect the run time
+    phase_points = np.linspace(0, 1.0, num_phase)
+    template_mags = cosine_series_phase(coeff, phase_points, order)
+    template_mags2 = cosine_series_phase(coeff2, phase_points, order2)
+    plt.clf
+    plt.scatter(good_phases, good_mag_v, color='grey', alpha=0.3)
+    #plt.plot(phase_points, template_mags, color='red', linewidth=2)
+    plt.plot(phase_points, template_mags2, color='blue', linewidth=2)
+    plt.ylabel("Magnitude")
+    plt.xlabel("Phase")
+    plt.show()
+
+
